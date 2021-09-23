@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -128,7 +129,15 @@ func worker(url string, doneChan chan struct{}) {
 
 			cmd := exec.Command("curl", flags...)
 			out, _ := cmd.CombinedOutput()
-			addToHistograms(string(out), dt())
+
+			// Get HTTP status code text if the output is an integer status code,
+			// or otherwise use the whole output.
+			status := string(out)
+			if s, err := strconv.ParseInt(status, 10, 64); err == nil {
+				status = fmt.Sprintf("%v %s", s, http.StatusText(int(s)))
+			}
+
+			addToHistograms(status, dt())
 		case "go":
 			client := http.Client{Timeout: *timeout}
 			if *insecure {
@@ -155,7 +164,7 @@ func worker(url string, doneChan chan struct{}) {
 				parts := strings.Split(err.Error(), ": ")
 				st = parts[len(parts)-1]
 			} else {
-				st = http.StatusText(resp.StatusCode)
+				st = fmt.Sprintf("%v %s", resp.StatusCode, http.StatusText(resp.StatusCode))
 			}
 			addToHistograms(st, dt())
 		case "noop":
