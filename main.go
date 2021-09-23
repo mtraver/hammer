@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -16,9 +17,12 @@ import (
 	termbox "github.com/nsf/termbox-go"
 )
 
-var numWorkers = flag.Int64("w", 1, "number of concurrent workers")
-var fetcher = flag.String("fetcher", "go", "type of fetcher to use: go|noop|curl")
-var timeout = flag.Duration("timeout", time.Minute, "timeout for requests")
+var (
+	numWorkers = flag.Int64("w", 1, "number of concurrent workers")
+	fetcher    = flag.String("fetcher", "go", "type of fetcher to use: go|noop|curl")
+	insecure   = flag.Bool("insecure", false, "skip cert verification")
+	timeout    = flag.Duration("timeout", time.Minute, "timeout for requests")
+)
 
 const interval = time.Second
 
@@ -116,11 +120,23 @@ func worker(url string, doneChan chan struct{}) {
 		dt := func() time.Duration { return time.Now().Sub(t0) }
 		switch *fetcher {
 		case "curl":
-			cmd := exec.Command("curl", "-s", "-S", url)
+			flags := []string{"-s", "-S"}
+			if *insecure {
+				flags = append(flags, "-k")
+			}
+			flags = append(flags, url)
+
+			cmd := exec.Command("curl", flags...)
 			out, _ := cmd.CombinedOutput()
 			addToHistograms(string(out), dt())
 		case "go":
 			client := http.Client{Timeout: *timeout}
+			if *insecure {
+				client.Transport = &http.Transport{
+					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				}
+			}
+
 			resp, err := client.Get(url)
 			if resp != nil {
 				// Read it, just in case that matters somehow.
