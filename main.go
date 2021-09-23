@@ -120,7 +120,7 @@ func worker(url string, doneChan chan struct{}) {
 		dt := func() time.Duration { return time.Now().Sub(t0) }
 		switch *fetcher {
 		case "curl":
-			flags := []string{"-s", "-S"}
+			flags := []string{"-s", "-S", "-L", "-o", "/dev/null", "-w", "%{http_code}"}
 			if *insecure {
 				flags = append(flags, "-k")
 			}
