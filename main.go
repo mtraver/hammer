@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -21,6 +22,7 @@ import (
 var (
 	numWorkers = flag.Int64("w", 1, "number of concurrent workers")
 	fetcher    = flag.String("fetcher", "go", "type of fetcher to use: go|noop|curl")
+	headers    = make(map[string]string)
 	insecure   = flag.Bool("insecure", false, "skip cert verification")
 	timeout    = flag.Duration("timeout", time.Minute, "timeout for requests")
 )
@@ -35,6 +37,34 @@ var histogram = make(map[string]int)
 // Usually they won't overlap, but that's fine.
 var lmu sync.Mutex
 var latencies = make(map[time.Duration]int)
+
+type headersFlag struct {
+	headers map[string]string
+}
+
+func (h headersFlag) String() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "{\n")
+	for k, v := range h.headers {
+		fmt.Fprintf(&b, "  %s=%s\n", k, v)
+	}
+	fmt.Fprintf(&b, "}")
+	return b.String()
+}
+
+func (h headersFlag) Set(value string) error {
+	parts := strings.SplitN(value, ":", 2)
+	if len(parts) != 2 {
+		return errors.New("header must be of the form key:value")
+	}
+
+	h.headers[parts[0]] = strings.TrimSpace(parts[1])
+	return nil
+}
+
+func init() {
+	flag.Var(&headersFlag{headers}, "header", "HTTP header to include in each request, in key:value format. You may give the flag multiple times to specify multiple headers.")
+}
 
 func main() {
 	flag.Parse()
@@ -125,6 +155,9 @@ func worker(url string, doneChan chan struct{}) {
 			if *insecure {
 				flags = append(flags, "-k")
 			}
+			for k, v := range headers {
+				flags = append(flags, "-H", fmt.Sprintf("%s: %s", k, v))
+			}
 			flags = append(flags, url)
 
 			cmd := exec.Command("curl", flags...)
@@ -146,7 +179,12 @@ func worker(url string, doneChan chan struct{}) {
 				}
 			}
 
-			resp, err := client.Get(url)
+			req, _ := http.NewRequest(http.MethodGet, url, nil)
+			for k, v := range headers {
+				req.Header.Add(k, v)
+			}
+
+			resp, err := client.Do(req)
 			if resp != nil {
 				// Read it, just in case that matters somehow.
 				if _, err := ioutil.ReadAll(resp.Body); err != nil {
